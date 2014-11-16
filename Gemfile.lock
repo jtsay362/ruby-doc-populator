@@ -1,0 +1,10 @@
+GEM
+  remote: http://rubygems.org/
+  specs:
+    rdoc (4.1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  rdoc

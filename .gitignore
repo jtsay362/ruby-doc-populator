@@ -1,0 +1,6 @@
+out/
+.idea/
+
+ruby_doc.json
+ruby_doc.json.bz2
+*~
