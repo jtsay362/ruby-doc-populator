@@ -1,22 +1,12 @@
 require 'json'
 require 'fileutils'
 require 'pathname'
-
+require 'uri'
 require 'rdoc/rdoc'
 
-require 'rdoc/generator/darkfish'
-require 'rdoc/generator/json_index'
-
-#class RDoc::Generator::Darkfish
-#  def initialize(store, options)
-#    super
-#    @json_index = RDoc::Generator::JsonIndex.new(self, options)
-#  end
-#
-#  def generate
-#    @json_index.generate
-#  end
-#end
+OUTPUT_VERSION_MARKER_URI_COMPONENT = '${VERSION}'
+VALID_VERSION_MARKER_URI_COMPONENT = '-_VERSION_-'
+BASE_URL = "http://www.ruby-doc.org/core-#{OUTPUT_VERSION_MARKER_URI_COMPONENT}"
 
 class ElasticsearchIndexGenerator
   RDoc::RDoc.add_generator self
@@ -24,6 +14,7 @@ class ElasticsearchIndexGenerator
   attr_reader :classes
   attr_reader :methods
   attr_reader :modsort
+  attr_reader :out
 
   def initialize(store, options)
     @store   = store
@@ -31,46 +22,272 @@ class ElasticsearchIndexGenerator
 
     @classes = nil
     @methods = nil
-    @modsort = nil
+    @modules = nil
+    @first_document = true
+  end
+
+  # needed for CodeObject.description
+  def class_dir
+    nil
+  end
+
+  def file_dir
+    nil
   end
 
   def generate
     setup
 
-    write_classes
+    File.open('ruby_doc.json', 'a:UTF-8') do |out|
+      @out = out
+      write_classes_and_modules
+      write_attributes
+      write_methods
+      write_constants
+    end
   end
 
   def setup
-    @classes = @store.all_classes_and_modules.sort
-    @methods = @classes.map { |m| m.method_list }.flatten.sort
-    @modsort = get_sorted_module_list @classes
+    @classes = @store.all_classes_and_modules
+    @methods = @classes.map { |m| m.method_list }.flatten
+    @attributes = @classes.map { |m| m.attributes }.flatten
+    @constants = @classes.map { |c| c.constants }.flatten
+    @modules = get_module_list @classes
   end
 
-  def write_modules
-    puts ','
-    @modsort.each do |mod|
-      puts mod.to_json
+  private
+
+  def write_classes_and_modules
+    @modules.each do |mod|
+      write_separator
+      if mod.module?
+        out.write(module_to_hash(mod, true).to_json)
+      else
+        out.write(class_to_hash(mod, true).to_json)
+      end
     end
   end
 
-  def write_classes
-    puts ','
-    @classes.each do |clazz|
-      puts clazz.to_json
+  def write_separator
+    if @first_document
+      @first_document = false
+    else
+      out.write("\n,")
     end
   end
+
 
   def write_methods
-    puts ','
     @methods.each do |method|
-      puts method.to_json
+      write_separator
+      out.write(method_to_hash(method, true).to_json)
     end
   end
 
-  def get_sorted_module_list classes
+  def write_attributes
+    @attributes.each do |a|
+      write_separator
+      out.write(attribute_to_hash(a, true).to_json)
+    end
+  end
+
+
+  def write_constants
+    @constants.each do |k|
+      write_separator
+      out.write(constant_to_hash(k, true).to_json)
+    end
+  end
+
+
+  def get_module_list classes
     classes.select do |klass|
-      klass.display?
-    end.sort
+      rv = klass.display?
+
+      unless rv
+        puts "Would have skipped class #{klass.name}"
+      end
+
+      #  Was klass.display? in Darkfish.
+      #  Always return true, otherwise we don't get String.
+      true
+    end
+  end
+
+  def code_object_to_hash(c, base_url, is_outer=false)
+    summaryHtml = nil
+    if c.comment.class.name == 'RDoc::Comment'
+      summaryHtml = strip_links(c.description.strip, base_url)
+    end
+
+    obj = {
+      name: c.name,
+      summaryHtml: summaryHtml,
+      project: 'ruby',
+      baseUrl: base_url
+    }
+
+    if is_outer
+      parent = c.parent ? c.parent.full_name : nil
+
+      # parent for
+      if parent && parent.include?('../')
+        parent = nil
+      end
+
+      obj.merge!({
+        parent: parent,
+        fullName: c.full_name
+      })
+    end
+
+    obj
+  end
+
+  def context_to_hash(c, base_url, is_outer=false)
+    obj = code_object_to_hash(c, base_url, is_outer).merge({
+      attributes: sort_hashes_by_name(c.attributes.map { |m| attribute_to_hash(m, false) }),
+      methods: sort_hashes_by_name(c.method_list.map { |m| method_to_hash(m, false) }),
+      extends: c.extends.map { |e| e.full_name }.sort,
+      includes: c.includes.map { |mod| mod.full_name }.sort,
+      visibility: c.visibility,
+      constants: sort_hashes_by_name(c.constants.map { |k| constant_to_hash(k, false) }),
+      uri: base_url + '/' + c.name + '.html'
+    })
+
+    obj
+  end
+
+  def member_to_hash(m, is_outer=false)
+    base_url = make_base_url(m.parent)
+    obj = code_object_to_hash(m, base_url, is_outer).merge({
+      uri: base_url + '/' + m.parent.name + '.html#' + m.name #FIXME
+    })
+  end
+
+  def attribute_to_hash(a, is_outer=false)
+    obj = member_to_hash(a, is_outer).merge({
+       visibility: a.visibility
+    })
+
+    if is_outer
+      obj.merge!({
+        recognitionKeys: ['com.solveforall.recognition.programming.ruby.Attribute'],
+        boost: 0.375
+      })
+    end
+
+    obj
+  end
+
+  def method_to_hash(m, is_outer=false)
+    obj = member_to_hash(m, is_outer).merge({
+      params: m.param_seq,
+      visibility: m.visibility
+    })
+
+    if is_outer
+      obj.merge!({
+        kind: 'method',
+        recognitionKeys: ['com.solveforall.recognition.programming.ruby.Method'],
+        boost: 0.5
+      })
+    end
+
+    obj
+  end
+
+  def class_to_hash(c, is_outer=false)
+    base_url = make_base_url(c)
+    obj = context_to_hash(c, base_url, is_outer)
+
+    if is_outer
+      obj.merge!({
+        kind: 'class',
+        recognitionKeys: ['com.solveforall.recognition.programming.ruby.Class'],
+        boost: 1.0
+      })
+    end
+
+    obj
+  end
+
+
+  def module_to_hash(mod, is_outer=false)
+    base_url = make_base_url(mod)
+    obj = context_to_hash(mod, base_url, is_outer)
+
+    if is_outer
+      obj.merge!({
+        kind: 'module',
+        recognitionKeys: ['com.solveforall.recognition.programming.ruby.Module'],
+        boost: 1.0
+      })
+    end
+
+    obj
+  end
+
+
+  def constant_to_hash(k, is_outer=false)
+    obj = member_to_hash(k, is_outer).merge({
+      value: k.value.to_s
+    })
+
+    if is_outer
+      obj.merge!({
+        kind: 'constant',
+        recognitionKeys: ['com.solveforall.recognition.programming.ruby.Constant'],
+        boost: 0.25
+      })
+    end
+
+    obj
+  end
+
+  def strip_links(html, base_url)
+    html.gsub(/<a(\s+[^>]*)>([^<]*)<\/a>/) do |match|
+      attributes = $1
+      inner = $2
+
+      md = attributes.match(/\shref\s*=\s*"\s*\/?([^"]+)"/)
+
+      if md && !md[1].start_with?('http://') && !md[1].start_with?('https://')
+        new_link = '<a href="' + normalize_url(base_url, md[1]) + '">' + inner + '</a>'
+        puts "Link '#{match}' => '#{new_link}'"
+        new_link
+      else
+        puts "Couldn't process link '#{match}'"
+        match
+      end
+    end
+  end
+
+  def sort_hashes_by_name(arr)
+    arr.sort_by { |h| h[:name] }
+  end
+
+  def make_base_url(context)
+    full_name = context.full_name
+    if full_name.include?('::')
+      subbed_full_name = full_name.gsub('::', '/')
+      last_slash_index = subbed_full_name.rindex('/')
+      rv = BASE_URL + '/' + subbed_full_name[0, last_slash_index]
+      puts "Base URL for full name '#{full_name}' changed to '#{rv}'"
+      rv
+    else
+      puts "Base URL for full name '#{full_name}' unchanged"
+      BASE_URL
+    end
+  end
+
+  def normalize_url(base_url, path)
+    begin
+      return URI.join(base_url.gsub(OUTPUT_VERSION_MARKER_URI_COMPONENT,  VALID_VERSION_MARKER_URI_COMPONENT) + '/', path).to_s.
+        gsub(VALID_VERSION_MARKER_URI_COMPONENT, OUTPUT_VERSION_MARKER_URI_COMPONENT)
+    rescue
+      return base_url + '/' + path
+    end
   end
 end
 
@@ -81,11 +298,12 @@ class RubyDocPopulator
     @output_filename = output_filename
 
     @output_path = "out"
+    @full_output_filename = File.join(@output_path, @output_filename)
   end
 
 
   def populate
-    File.open(@output_filename, 'w:UTF-8') do |out|
+    File.open(@full_output_filename, 'w:UTF-8') do |out|
       out.write <<-eos
 {
   "metadata" : {
@@ -98,370 +316,139 @@ class RubyDocPopulator
           "type" : "multi_field",
           "path" : "just_name",
           "fields" : {
-             "rawName" : { "type" : "string", "index" : "not_analyzed" },
-             "name" : { "type" : "string", "index" : "analyzed" }
-          }
-        },
-        "description" : {
-          "type" : "string",
-          "index" : "analyzed"
-        },
-        "author" : {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "email" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "contributors" : {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "email" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "github" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "url" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "web" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "dist-tags" : {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "version" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "versions" : {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "tag" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "version" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "main" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "maintainers" : {
-          "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "email" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "website" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "readmeFilename" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "repository" : {
-          "type" : "object",
-          "properties" : {
-            "author" : {
-              "type" : "string",
-              "index" : "no"
-            },
-
-            "commit_date" : {
-              "type" : "date",
-              "index" : "no"
-            },
-            "dist" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "email" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "git" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "github" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "handle" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "id_string" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "job" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "main" : {
-              "type" : "string",
-              "index" : "no"
+             "rawName" : {
+               "type" : "string",
+               "index" : "not_analyzed"
             },
             "name" : {
               "type" : "string",
-              "index" : "no"
-            },
-            "repository" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "revision" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "private" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "static" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "title" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "type" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "update" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "url" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "version" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "versions" : {
-              "type" : "object",
-              "properties" : {
-                "tag" : {
-                  "type" : "string",
-                  "index" : "no"
-                },
-                "version" : {
-                  "type" : "string",
-                  "index" : "no"
-                }
-              }
-            },
-            "web" :  {
-              "type" : "string",
-              "index" : "no"
+              "index" : "analyzed"
             }
           }
         },
-        "dist" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "email" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "gpg" : {
-          "type" : "object",
-          "properties" : {
-            "fingerprint" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "signature" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "homepage" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "license" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "org" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "path" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "signature" : {
-          "type" : "string",
-          "index" : "no"
-        },
-        "bugs" : {
-          "type" : "object",
-          "properties" : {
-            "bugs" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "email" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "license" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "mail" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "readmeFilename" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "tags" : {
-              "type" : "object",
-              "properties" : {
-                "tag" : {
-                  "type" : "string",
-                  "index" : "no"
-                },
-                "version" : {
-                  "type" : "string",
-                  "index" : "no"
-                }
-              }
-            },
-            "versions" : {
-              "type" : "object",
-              "properties" : {
-                "tag" : {
-                  "type" : "string",
-                  "index" : "no"
-                },
-                "version" : {
-                  "type" : "string",
-                  "index" : "no"
-                }
-              }
-            },
-            "time" : {
-              "type" : "object",
-              "properties" : {
-                "modified" : {
-                  "type" : "date",
-                  "index" : "no"
-                }
-              }
-            },
-            "url" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "web" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
-        },
-        "time" : {
-          "type" : "object",
-          "properties" : {
-            "modified" : {
-              "type" : "date",
-              "index" : "no"
-            }
-          }
-        },
-        "keywords" : {
+        "fullName" : {
           "type" : "string",
           "index" : "not_analyzed"
         },
-        "stars" : {
-          "type" : "integer",
-          "store" : true
+        "summaryHtml" : {
+          "type" : "string",
+          "index" : "analyzed"
         },
-        "update" : {
+        "parent" : {
+          "type" : "string",
+          "index" : "analyzed"
+        },
+        "kind" : {
+          "type" : "string",
+          "index" : "analyzed"
+        },
+        "boost" : {
+          "type" : "float",
+          "store" : true,
+          "null_value" : 1.0,
+          "coerce" : false
+        },
+        "project" : {
+          "type" : "string",
+          "index" : "analyzed"
+        },
+        "baseUrl" : {
           "type" : "string",
           "index" : "no"
         },
-        "created" : {
-          "type" : "date",
-          "store" : true
+        "uri" : {
+          "type" : "string",
+          "index" : "no"
         },
-        "updated" : {
-          "type" : "date",
-          "store" : true
+        "visibility" : {
+          "type" : "boolean",
+          "index" : "no"
+        },
+        "params" : {
+          "type" : "string",
+          "index" : "no"
+        },
+        "value" : {
+          "type" : "string",
+          "index" : "no"
+        },
+        "constants" : {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "summaryHtml" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "value" : {
+              "type" : "string",
+              "index" : "no"
+            }
+          }
+        },
+        "methods" : {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "summaryHtml" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "visibility" : {
+              "type" : "boolean",
+              "index" : "no"
+            },
+            "params" : {
+              "type" : "string",
+              "index" : "no"
+            }
+          }
+        },
+        "attributes" : {
+          "type" : "object",
+          "properties" : {
+            "name" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "summaryHtml" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "visibility" : {
+              "type" : "boolean",
+              "index" : "no"
+            }
+          }
+        },
+        "includes" : {
+          "type" : "string",
+          "index" : "no"
         }
       }
     }
   },
-  "updates" :
+  "updates" : [
     eos
+    end
 
-      #out.write(parse_packages().to_json)
+    write_doc_index
 
-      write_doc_index(out)
-
-      out.write("\n}")
+    File.open(@full_output_filename, 'a:UTF-8') do |out|
+      out.write("]\n}")
     end
   end
 
   private
 
-  def write_doc_index(out)
-    args = ['-o', @output_path, @input_path, '-f', ElasticsearchIndexGenerator.name.downcase, '-V']
+  def write_doc_index
+    args = ['-o', @output_path, '--force-output', @input_path, '-f', ElasticsearchIndexGenerator.name.downcase, '-V']
 
     rdoc = RDoc::RDoc.new
     options = rdoc.load_options
@@ -486,9 +473,9 @@ end
 
 puts "input_path = #{input_path}"
 
-`rm -rf out`
+FileUtils.mkdir_p("out")
 
 populator = RubyDocPopulator.new(input_path, output_filename)
 
 populator.populate()
-system("bzip2 -kf #{output_filename}")
+system("bzip2 -kf out/#{output_filename}")
