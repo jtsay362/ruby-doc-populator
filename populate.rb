@@ -205,7 +205,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'class',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Class'],
-        boost: 1.0
+        boost: 1.2
       })
     end
 
@@ -351,10 +351,6 @@ class RubyDocPopulator
         "project" : {
           "type" : "string",
           "index" : "analyzed"
-        },
-        "baseUrl" : {
-          "type" : "string",
-          "index" : "no"
         },
         "uri" : {
           "type" : "string",
