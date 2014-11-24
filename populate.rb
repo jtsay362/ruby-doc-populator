@@ -346,13 +346,23 @@ class RubyDocPopulator
             }
           }
         },
-        "fullName" : {
-          "type" : "string",
-          "index" : "not_analyzed"
+        "full_name" : {
+          "type" : "multi_field",
+          "path" : "just_name",
+          "fields" : {
+             "rawFullName" : {
+               "type" : "string",
+               "index" : "not_analyzed"
+            },
+            "fullName" : {
+              "type" : "string",
+              "index" : "analyzed"
+            }
+          }
         },
         "summaryHtml" : {
           "type" : "string",
-          "index" : "analyzed"
+          "index" : "no"
         },
         "parent" : {
           "type" : "string",
