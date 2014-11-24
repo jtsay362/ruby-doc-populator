@@ -80,14 +80,14 @@ class ElasticsearchIndexGenerator
   def write_methods
     @methods.each do |method|
       write_separator
-      out.write(method_to_hash(method, true).to_json)
+      out.write(method_to_hash(method, nil, true).to_json)
     end
   end
 
   def write_attributes
     @attributes.each do |a|
       write_separator
-      out.write(attribute_to_hash(a, true).to_json)
+      out.write(attribute_to_hash(a, nil, true).to_json)
     end
   end
 
@@ -95,7 +95,7 @@ class ElasticsearchIndexGenerator
   def write_constants
     @constants.each do |k|
       write_separator
-      out.write(constant_to_hash(k, true).to_json)
+      out.write(constant_to_hash(k, nil, true).to_json)
     end
   end
 
@@ -114,10 +114,10 @@ class ElasticsearchIndexGenerator
     end
   end
 
-  def code_object_to_hash(c, base_url, is_outer=false)
+  def code_object_to_hash(c, base_url, page_url, is_outer=false)
     summaryHtml = nil
     if c.comment.class.name == 'RDoc::Comment'
-      summaryHtml = strip_links(c.description.strip, base_url)
+      summaryHtml = process_links(c.description.strip, base_url, page_url)
     end
 
     obj = {
@@ -145,29 +145,30 @@ class ElasticsearchIndexGenerator
   end
 
   def context_to_hash(c, base_url, is_outer=false)
-    obj = code_object_to_hash(c, base_url, is_outer).merge({
-      attributes: sort_hashes_by_name(c.attributes.map { |m| attribute_to_hash(m, false) }),
-      methods: sort_hashes_by_name(c.method_list.map { |m| method_to_hash(m, false) }),
+    context_url = base_url + '/' + c.name + '.html'
+    obj = code_object_to_hash(c, base_url, context_url, is_outer).merge({
+      attributes: sort_hashes_by_name(c.attributes.map { |m| attribute_to_hash(m, context_url, false) }),
+      methods: sort_hashes_by_name(c.method_list.map { |m| method_to_hash(m, context_url, false) }),
       extends: c.extends.map { |e| e.full_name }.sort,
       includes: c.includes.map { |mod| mod.full_name }.sort,
       visibility: c.visibility,
-      constants: sort_hashes_by_name(c.constants.map { |k| constant_to_hash(k, false) }),
-      uri: base_url + '/' + c.name + '.html'
+      constants: sort_hashes_by_name(c.constants.map { |k| constant_to_hash(k, context_url, false) }),
+      uri: context_url
     })
 
     obj
   end
 
-  def member_to_hash(m, is_outer=false)
+  def member_to_hash(m, context_url, is_outer=false)
     base_url = make_base_url(m.parent)
-    obj = code_object_to_hash(m, base_url, is_outer).merge({
-      uri: base_url + '/' + m.parent.name + '.html#' + m.name #FIXME
-    })
+    obj = code_object_to_hash(m, base_url, context_url, is_outer)
   end
 
-  def attribute_to_hash(a, is_outer=false)
-    obj = member_to_hash(a, is_outer).merge({
-       visibility: a.visibility
+  def attribute_to_hash(a, context_url=nil, is_outer=false)
+    context_url ||= make_context_url_of_member(a)
+    obj = member_to_hash(a, context_url, is_outer).merge({
+       visibility: a.visibility,
+       uri: context_url + '#' + a.aref
     })
 
     if is_outer
@@ -180,10 +181,12 @@ class ElasticsearchIndexGenerator
     obj
   end
 
-  def method_to_hash(m, is_outer=false)
-    obj = member_to_hash(m, is_outer).merge({
+  def method_to_hash(m, context_url=nil, is_outer=false)
+    context_url ||= make_context_url_of_member(m)
+    obj = member_to_hash(m, context_url, is_outer).merge({
       params: m.param_seq,
-      visibility: m.visibility
+      visibility: m.visibility,
+      uri: context_url + '#' + m.aref
     })
 
     if is_outer
@@ -228,10 +231,11 @@ class ElasticsearchIndexGenerator
     obj
   end
 
-
-  def constant_to_hash(k, is_outer=false)
-    obj = member_to_hash(k, is_outer).merge({
-      value: k.value.to_s
+  def constant_to_hash(k, context_url=nil, is_outer=false)
+    context_url ||= make_context_url_of_member(k)
+    obj = member_to_hash(k, context_url, is_outer).merge({
+      value: k.value.to_s,
+      uri: context_url + '#' + k.name
     })
 
     if is_outer
@@ -245,19 +249,25 @@ class ElasticsearchIndexGenerator
     obj
   end
 
-  def strip_links(html, base_url)
+  def process_links(html, base_url, page_url)
     html.gsub(/<a(\s+[^>]*)>([^<]*)<\/a>/) do |match|
       attributes = $1
       inner = $2
 
       md = attributes.match(/\shref\s*=\s*"\s*\/?([^"]+)"/)
 
-      if md && !md[1].start_with?('http://') && !md[1].start_with?('https://')
-        new_link = '<a href="' + normalize_url(base_url, md[1]) + '">' + inner + '</a>'
-        puts "Link '#{match}' => '#{new_link}'"
-        new_link
+      if md
+        href = md[1]
+
+        if href.start_with?('http://') || href.start_with?('https://')
+          match
+        else
+          new_link = '<a href="' + normalize_url(base_url, page_url, href) + '">' + inner + '</a>'
+          puts "Link '#{match}' => '#{new_link}'"
+          new_link
+        end
       else
-        puts "Couldn't process link '#{match}'"
+        puts "Skipping link processing for '#{match}'"
         match
       end
     end
@@ -281,13 +291,23 @@ class ElasticsearchIndexGenerator
     end
   end
 
-  def normalize_url(base_url, path)
-    begin
-      return URI.join(base_url.gsub(OUTPUT_VERSION_MARKER_URI_COMPONENT,  VALID_VERSION_MARKER_URI_COMPONENT) + '/', path).to_s.
-        gsub(VALID_VERSION_MARKER_URI_COMPONENT, OUTPUT_VERSION_MARKER_URI_COMPONENT)
-    rescue
-      return base_url + '/' + path
+  def make_context_url_of_member(m)
+    base_url = make_base_url(m.parent)
+    base_url + '/' + m.parent.name + '.html'
+  end
+
+  def normalize_url(base_url, context_url, path)
+    if path.start_with?('#')
+      context_url + path
+    else
+      begin
+        return URI.join(base_url.gsub(OUTPUT_VERSION_MARKER_URI_COMPONENT,  VALID_VERSION_MARKER_URI_COMPONENT) + '/', path).to_s.
+          gsub(VALID_VERSION_MARKER_URI_COMPONENT, OUTPUT_VERSION_MARKER_URI_COMPONENT)
+      rescue
+        return base_url + '/' + path
+      end
     end
+
   end
 end
 
