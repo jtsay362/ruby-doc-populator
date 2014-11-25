@@ -209,7 +209,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'class',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Class'],
-        boost: 1.0
+        boost: 2.0
       })
     end
 
@@ -225,7 +225,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'module',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Module'],
-        boost: 1.0
+        boost: 2.0
       })
     end
 
