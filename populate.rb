@@ -122,9 +122,7 @@ class ElasticsearchIndexGenerator
 
     obj = {
       name: c.name,
-      summaryHtml: summaryHtml,
-      project: 'ruby',
-      baseUrl: base_url
+      summaryHtml: summaryHtml
     }
 
     if is_outer
@@ -137,7 +135,10 @@ class ElasticsearchIndexGenerator
 
       obj.merge!({
         parent: parent,
-        fullName: c.full_name
+        fullName: c.full_name,
+        fullNameTokens: tokenize_full_name(c.full_name),
+        baseUrl: base_url,
+        project: 'ruby'
       })
     end
 
@@ -174,7 +175,7 @@ class ElasticsearchIndexGenerator
     if is_outer
       obj.merge!({
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Attribute'],
-        boost: 0.375
+        boost: 0.8
       })
     end
 
@@ -193,7 +194,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'method',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Method'],
-        boost: 0.5
+        boost: 1.0
       })
     end
 
@@ -208,7 +209,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'class',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Class'],
-        boost: 1.2
+        boost: 1.0
       })
     end
 
@@ -242,7 +243,7 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         kind: 'constant',
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Constant'],
-        boost: 0.25
+        boost: 0.5
       })
     end
 
@@ -307,7 +308,10 @@ class ElasticsearchIndexGenerator
         return base_url + '/' + path
       end
     end
+  end
 
+  def tokenize_full_name(full_name)
+    full_name.split(/::|#/)
   end
 end
 
@@ -346,7 +350,7 @@ class RubyDocPopulator
             }
           }
         },
-        "full_name" : {
+        "fullName" : {
           "type" : "multi_field",
           "path" : "just_name",
           "fields" : {
@@ -355,6 +359,20 @@ class RubyDocPopulator
                "index" : "not_analyzed"
             },
             "fullName" : {
+              "type" : "string",
+              "index" : "analyzed"
+            }
+          }
+        },
+        "fullNameTokens" : {
+          "type" : "multi_field",
+          "path" : "just_name",
+          "fields" : {
+             "rawFullNameTokens" : {
+               "type" : "string",
+               "index" : "not_analyzed"
+            },
+            "fullNameTokens" : {
               "type" : "string",
               "index" : "analyzed"
             }
@@ -409,6 +427,10 @@ class RubyDocPopulator
               "type" : "string",
               "index" : "no"
             },
+            "uri" : {
+              "type" : "string",
+              "index" : "no"
+            },
             "value" : {
               "type" : "string",
               "index" : "no"
@@ -423,6 +445,10 @@ class RubyDocPopulator
               "index" : "no"
             },
             "summaryHtml" : {
+              "type" : "string",
+              "index" : "no"
+            },
+            "uri" : {
               "type" : "string",
               "index" : "no"
             },
@@ -447,11 +473,19 @@ class RubyDocPopulator
               "type" : "string",
               "index" : "no"
             },
+            "uri" : {
+              "type" : "string",
+              "index" : "no"
+            },
             "visibility" : {
               "type" : "boolean",
               "index" : "no"
             }
           }
+        },
+        "extends" : {
+          "type" : "string",
+          "index" : "no"
         },
         "includes" : {
           "type" : "string",
