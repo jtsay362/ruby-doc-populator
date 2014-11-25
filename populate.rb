@@ -203,7 +203,16 @@ class ElasticsearchIndexGenerator
 
   def class_to_hash(c, is_outer=false)
     base_url = make_base_url(c)
-    obj = context_to_hash(c, base_url, is_outer)
+
+    superclass = c.superclass
+
+    if superclass.respond_to?(:full_name)
+      superclass = superclass.full_name
+    end
+
+    obj = context_to_hash(c, base_url, is_outer).merge({
+      superClass: superclass
+    })
 
     if is_outer
       obj.merge!({
@@ -482,6 +491,10 @@ class RubyDocPopulator
               "index" : "no"
             }
           }
+        },
+        "superClass" : {
+          "type" : "string",
+          "index" : "no"
         },
         "extends" : {
           "type" : "string",
