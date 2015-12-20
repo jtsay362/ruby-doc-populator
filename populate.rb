@@ -136,9 +136,12 @@ class ElasticsearchIndexGenerator
       obj.merge!({
         parent: parent,
         fullName: c.full_name,
-        fullNameTokens: tokenize_full_name(c.full_name),
         baseUrl: base_url,
-        project: 'ruby'
+        project: 'ruby',
+        suggest: {
+          input: [c.name, c.full_name],
+          output: [c.full_name]
+        }
       })
     end
 
@@ -177,6 +180,7 @@ class ElasticsearchIndexGenerator
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Attribute'],
         boost: 0.8
       })
+      obj[:suggest][:weight] = 80
     end
 
     obj
@@ -220,6 +224,7 @@ class ElasticsearchIndexGenerator
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Class'],
         boost: 2.0
       })
+      obj[:suggest][:weight] = 200
     end
 
     obj
@@ -236,6 +241,7 @@ class ElasticsearchIndexGenerator
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Module'],
         boost: 2.0
       })
+      obj[:suggest][:weight] = 200
     end
 
     obj
@@ -254,6 +260,7 @@ class ElasticsearchIndexGenerator
         recognitionKeys: ['com.solveforall.recognition.programming.ruby.Constant'],
         boost: 0.5
       })
+      obj[:suggest][:weight] = 50
     end
 
     obj
@@ -318,10 +325,6 @@ class ElasticsearchIndexGenerator
       end
     end
   end
-
-  def tokenize_full_name(full_name)
-    full_name.split(/::|#/)
-  end
 end
 
 
@@ -340,6 +343,24 @@ class RubyDocPopulator
       out.write <<-eos
 {
   "metadata" : {
+    "settings" : {
+      "analysis": {
+        "char_filter" : {
+          "no_special" : {
+            "type" : "mapping",
+            "mappings" : [":=>", "#=>", ".=>"]
+          }
+        },
+        "analyzer" : {
+          "lower_keyword" : {
+            "type" : "custom",
+            "tokenizer": "keyword",
+            "filter" : ["lowercase"],
+            "char_filter" : ["no_special"]
+          }
+        }
+      }
+    },
     "mapping" : {
       "_all" : {
         "enabled" : false
@@ -347,42 +368,11 @@ class RubyDocPopulator
       "properties" : {
         "name" : {
           "type" : "string",
-          "fields" : {
-            "rawName" : {
-               "type" : "string",
-               "index" : "not_analyzed"
-            },
-            "name" : {
-              "type" : "string",
-              "index" : "analyzed"
-            }
-          }
+           "analyzer" : "lower_keyword"
         },
         "fullName" : {
           "type" : "string",
-          "fields" : {
-             "rawFullName" : {
-               "type" : "string",
-               "index" : "not_analyzed"
-            },
-            "fullName" : {
-              "type" : "string",
-              "index" : "analyzed"
-            }
-          }
-        },
-        "fullNameTokens" : {
-          "type" : "string",
-          "fields" : {
-             "rawFullNameTokens" : {
-               "type" : "string",
-               "index" : "not_analyzed"
-            },
-            "fullNameTokens" : {
-              "type" : "string",
-              "index" : "analyzed"
-            }
-          }
+           "analyzer" : "lower_keyword"
         },
         "summaryHtml" : {
           "type" : "string",
@@ -390,11 +380,11 @@ class RubyDocPopulator
         },
         "parent" : {
           "type" : "string",
-          "index" : "analyzed"
+          "index" : "no"
         },
         "kind" : {
           "type" : "string",
-          "index" : "analyzed"
+          "index" : "not_analyzed"
         },
         "boost" : {
           "type" : "float",
@@ -404,7 +394,7 @@ class RubyDocPopulator
         },
         "project" : {
           "type" : "string",
-          "index" : "analyzed"
+          "index" : "not_analyzed"
         },
         "uri" : {
           "type" : "string",
@@ -445,6 +435,10 @@ class RubyDocPopulator
         "includes" : {
           "type" : "string",
           "index" : "no"
+        },
+        "suggest" : {
+          "type" : "completion",
+          "analyzer" : "lower_keyword"
         }
       }
     }
