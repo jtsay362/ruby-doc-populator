@@ -346,10 +346,9 @@ class RubyDocPopulator
       },
       "properties" : {
         "name" : {
-          "type" : "multi_field",
-          "path" : "just_name",
+          "type" : "string",
           "fields" : {
-             "rawName" : {
+            "rawName" : {
                "type" : "string",
                "index" : "not_analyzed"
             },
@@ -360,8 +359,7 @@ class RubyDocPopulator
           }
         },
         "fullName" : {
-          "type" : "multi_field",
-          "path" : "just_name",
+          "type" : "string",
           "fields" : {
              "rawFullName" : {
                "type" : "string",
@@ -374,8 +372,7 @@ class RubyDocPopulator
           }
         },
         "fullNameTokens" : {
-          "type" : "multi_field",
-          "path" : "just_name",
+          "type" : "string",
           "fields" : {
              "rawFullNameTokens" : {
                "type" : "string",
