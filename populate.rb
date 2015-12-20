@@ -424,70 +424,15 @@ class RubyDocPopulator
         },
         "constants" : {
           "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "summaryHtml" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "uri" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "value" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
+          "enabled" : false
         },
         "methods" : {
           "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "summaryHtml" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "uri" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "visibility" : {
-              "type" : "boolean",
-              "index" : "no"
-            },
-            "params" : {
-              "type" : "string",
-              "index" : "no"
-            }
-          }
+          "enabled" : false
         },
         "attributes" : {
           "type" : "object",
-          "properties" : {
-            "name" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "summaryHtml" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "uri" : {
-              "type" : "string",
-              "index" : "no"
-            },
-            "visibility" : {
-              "type" : "boolean",
-              "index" : "no"
-            }
-          }
+          "enabled" : false
         },
         "superClass" : {
           "type" : "string",
