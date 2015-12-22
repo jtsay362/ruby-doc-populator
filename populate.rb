@@ -3,10 +3,18 @@ require 'fileutils'
 require 'pathname'
 require 'uri'
 require 'rdoc/rdoc'
+require 'set'
 
 OUTPUT_VERSION_MARKER_URI_COMPONENT = '${VERSION}'
 VALID_VERSION_MARKER_URI_COMPONENT = '-_VERSION_-'
-BASE_URL = "http://www.ruby-doc.org/core-#{OUTPUT_VERSION_MARKER_URI_COMPONENT}"
+CORE_BASE_URL = "http://www.ruby-doc.org/core-#{OUTPUT_VERSION_MARKER_URI_COMPONENT}"
+STDLIB_BASE_URL = "http://ruby-doc.org/stdlib-#{OUTPUT_VERSION_MARKER_URI_COMPONENT}/libdoc"
+
+# JSON.stringify($('#class-index .entries .class a').map(function (t) { return $(this).text(); }).toArray())
+CORE_CLASSES = Set.new(["ConditionVariable","Queue","SizedQueue","Array","Bignum","BasicObject","Object","Module","Class","Complex","Complex::compatible","NilClass","Numeric","String","Float","Fiber","FiberError","Continuation","Dir","File","Encoding","Enumerator","StopIteration","Enumerator::Lazy","Enumerator::Generator","Enumerator::Yielder","Exception","SystemExit","fatal","SignalException","Interrupt","StandardError","TypeError","ArgumentError","IndexError","KeyError","RangeError","ScriptError","SyntaxError","LoadError","NotImplementedError","NameError","NoMethodError","RuntimeError","SecurityError","NoMemoryError","EncodingError","SystemCallError","Encoding::CompatibilityError","File::Stat","IO","ObjectSpace::WeakMap","Hash","ENV","IOError","EOFError","IO::EAGAINWaitReadable","IO::EAGAINWaitWritable","IO::EWOULDBLOCKWaitReadable","IO::EWOULDBLOCKWaitWritable","IO::EINPROGRESSWaitReadable","IO::EINPROGRESSWaitWritable","unknown","RubyVM","RubyVM::InstructionSequence","Math::DomainError","ZeroDivisionError","FloatDomainError","Integer","Fixnum","Data","TrueClass","FalseClass","Thread","Proc","LocalJumpError","SystemStackError","Method","UnboundMethod","Binding","Process::Waiter","Process::Status","Struct","Random","Range","Rational","Rational::compatible","RegexpError","Regexp","MatchData","Symbol","ThreadGroup","Mutex","ThreadError","Time","Encoding::UndefinedConversionError","Encoding::InvalidByteSequenceError","Encoding::ConverterNotFoundError","Encoding::Converter","RubyVM::Env","Thread::Backtrace","Thread::Backtrace::Location","UncaughtThrowError","TracePoint"])
+
+# JSON.stringify($('#class-index .entries .module a').map(function (t) { return $(this).text(); }).toArray())
+CORE_MODULES = Set.new(["Comparable", "Kernel", "File::Constants", "Enumerable", "Errno", "FileTest", "GC", "ObjectSpace", "GC::Profiler", "IO::WaitReadable", "IO::WaitWritable", "Marshal", "Math", "Process", "Process::UID", "Process::GID", "Process::Sys", "Signal"])
 
 class ElasticsearchIndexGenerator
   RDoc::RDoc.add_generator self
@@ -296,16 +304,30 @@ class ElasticsearchIndexGenerator
 
   def make_base_url(context)
     full_name = context.full_name
+    subbed_full_name = full_name.gsub('::', '/')
+    name = context.name
+
+    path = ''
     if full_name.include?('::')
-      subbed_full_name = full_name.gsub('::', '/')
       last_slash_index = subbed_full_name.rindex('/')
-      rv = BASE_URL + '/' + subbed_full_name[0, last_slash_index]
-      puts "Base URL for full name '#{full_name}' changed to '#{rv}'"
-      rv
-    else
-      puts "Base URL for full name '#{full_name}' unchanged"
-      BASE_URL
+      path = '/' + subbed_full_name[0, last_slash_index]
     end
+
+    base = nil
+    if CORE_CLASSES.include?(full_name) || CORE_MODULES.include?(full_name)
+      base = CORE_BASE_URL
+    else
+      first_name = name
+
+      if full_name.include?('::')
+        first_slash_index = subbed_full_name.index('/')
+        first_name = subbed_full_name[0, first_slash_index]
+      end
+
+      base = STDLIB_BASE_URL + '/' + first_name.downcase + '/rdoc'
+    end
+
+    base + path
   end
 
   def make_context_url_of_member(m)
