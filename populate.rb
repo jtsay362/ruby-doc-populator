@@ -147,7 +147,7 @@ class ElasticsearchIndexGenerator
         baseUrl: base_url,
         project: 'ruby',
         suggest: {
-          input: [c.name, c.full_name],
+          input: [c.name, c.full_name].uniq,
           output: [c.full_name]
         }
       })
